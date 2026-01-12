@@ -27,6 +27,7 @@
   const chartPanel = document.getElementById('chartPanel');
   const chartData = document.getElementById('chartData');
   const chartCopy = document.getElementById('chartCopy');
+  const bgVolume = document.getElementById('bgVolume');
 
   const BASE_W = 1280;
   const BASE_H = 720;
@@ -99,6 +100,17 @@
 
   function getMediaTime(){
     return bgVideo ? bgVideo.currentTime : 0;
+  }
+
+  function initVolumeControl(){
+    if(!bgVideo || !bgVolume) return;
+    const initial = Math.round((bgVideo.volume || 1) * 100);
+    bgVolume.value = String(initial);
+    bgVolume.addEventListener('input', () => {
+      const value = Number(bgVolume.value);
+      if(Number.isNaN(value)) return;
+      bgVideo.volume = Math.max(0, Math.min(1, value / 100));
+    });
   }
 
   function setChartPanelVisible(visible){
@@ -462,8 +474,14 @@
     judgement = null;
     judgEl.textContent = '';
     judgEl.style.opacity = '0';
+    chartIndex = 0;
     jammerQueue = [];
     lastJammerAt = -Infinity;
+    if(toastTimer){
+      clearTimeout(toastTimer);
+      toastTimer = null;
+    }
+    if(toastEl) toastEl.style.display = 'none';
     if(resultOverlay) resultOverlay.style.display = 'none';
     updateLifeHud();
   }
@@ -555,6 +573,7 @@
   // initial draw for static screen
   draw();
   updateLifeHud();
+  initVolumeControl();
 
   // expose for debugging
   window._rhythm = {notes};

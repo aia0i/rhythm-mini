@@ -14,6 +14,8 @@
     .hud{position:absolute;left:12px;top:10px;font-weight:600;letter-spacing:.5px;z-index:3}
     .hud .score{font-size:14px}
     .hud .combo{font-size:12px;opacity:.85}
+    .volume-control{margin-top:8px;font-size:11px;opacity:.85;display:flex;align-items:center;gap:8px}
+    .volume-control input{width:120px}
     .lane-buttons{position:absolute;left:0;right:0;bottom:0;top:0;display:flex;z-index:4}
     .lane-btn{flex:1;background:transparent;border:0;outline:none}
     .judgement{position:absolute;left:50%;transform:translateX(-50%);top:40%;font-size:20px;font-weight:700;pointer-events:none;z-index:3}
@@ -45,6 +47,10 @@
       <div class="rec-status" id="recStatus">REC</div>
       <div class="chart-status" id="chartStatus"></div>
       <div class="life-status" id="lifeStatus">LIFE: <span id="lifeValue">100</span></div>
+      <label class="volume-control" for="bgVolume">
+        VOLUME
+        <input id="bgVolume" type="range" min="0" max="100" value="100" />
+      </label>
     </div>
 
     <video id="bgVideo" class="bg-video" src="assets/bg.mp4" loop playsinline></video>

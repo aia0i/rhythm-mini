@@ -27,7 +27,12 @@
   const chartPanel = document.getElementById('chartPanel');
   const chartData = document.getElementById('chartData');
   const chartCopy = document.getElementById('chartCopy');
-  const bgVolume = document.getElementById('bgVolume');
+  const bgmVolume = document.getElementById('bgmVolume');
+  const bgmVolumeValue = document.getElementById('bgmVolumeValue');
+  const pauseBtn = document.getElementById('pauseBtn');
+  const pauseOverlay = document.getElementById('pauseOverlay');
+  const resumeBtn = document.getElementById('resumeBtn');
+  const backToSettingsBtn = document.getElementById('backToSettingsBtn');
 
   const BASE_W = 1280;
   const BASE_H = 720;
@@ -50,6 +55,8 @@
   const JAMMER_MIN_OFFSET = 0.6;
   const JAMMER_MAX_OFFSET = 1.2;
   const JAMMER_RATE_LIMIT = 1.0;
+  const DEFAULT_BGM_VOLUME = 80;
+  const BGM_VOLUME_STORAGE_KEY = 'rhythm_bgm_volume';
 
   let dpr = Math.max(1, window.devicePixelRatio || 1);
   function applyDPR(){
@@ -81,6 +88,7 @@
   let missCount = 0;
   let started = false;
   let ended = false;
+  let paused = false;
   let mode = null; // 'streamer' | 'rank'
   let life = LIFE_MAX;
   let recording = false;
@@ -91,6 +99,7 @@
   let jammerQueue = [];
   let lastJammerAt = -Infinity;
   let toastTimer = null;
+  let bgmVolumeValueState = DEFAULT_BGM_VOLUME;
 
   const PERFECT_WINDOW = 22;
   const GOOD_WINDOW = 55;
@@ -102,14 +111,46 @@
     return bgVideo ? bgVideo.currentTime : 0;
   }
 
+  function clampVolume(value, fallback){
+    if(Number.isNaN(value)) return fallback;
+    return Math.max(0, Math.min(100, value));
+  }
+
+  function readStoredBgmVolume(){
+    if(!window.localStorage) return DEFAULT_BGM_VOLUME;
+    const raw = window.localStorage.getItem(BGM_VOLUME_STORAGE_KEY);
+    return clampVolume(Number(raw), DEFAULT_BGM_VOLUME);
+  }
+
+  function hasStoredBgmVolume(){
+    if(!window.localStorage) return false;
+    return window.localStorage.getItem(BGM_VOLUME_STORAGE_KEY) !== null;
+  }
+
+  function writeStoredBgmVolume(value){
+    if(!window.localStorage) return;
+    window.localStorage.setItem(BGM_VOLUME_STORAGE_KEY, String(value));
+  }
+
+  function applyBgmVolume(value, persist){
+    bgmVolumeValueState = clampVolume(value, DEFAULT_BGM_VOLUME);
+    if(bgmVolume) bgmVolume.value = String(bgmVolumeValueState);
+    if(bgmVolumeValue) bgmVolumeValue.textContent = String(bgmVolumeValueState);
+    if(!bgVideo){
+      console.error('[audio] bgVideo not found');
+      if(persist) writeStoredBgmVolume(bgmVolumeValueState);
+      return;
+    }
+    bgVideo.volume = Math.min(1, Math.max(0, bgmVolumeValueState / 100));
+    console.log('[audio] set bgm volume:', bgVideo.volume);
+    if(persist) writeStoredBgmVolume(bgmVolumeValueState);
+  }
+
   function initVolumeControl(){
-    if(!bgVideo || !bgVolume) return;
-    const initial = Math.round((bgVideo.volume || 1) * 100);
-    bgVolume.value = String(initial);
-    bgVolume.addEventListener('input', () => {
-      const value = Number(bgVolume.value);
-      if(Number.isNaN(value)) return;
-      bgVideo.volume = Math.max(0, Math.min(1, value / 100));
+    if(!bgmVolume) return;
+    applyBgmVolume(readStoredBgmVolume(), !hasStoredBgmVolume());
+    bgmVolume.addEventListener('input', () => {
+      applyBgmVolume(Number(bgmVolume.value), true);
     });
   }
 
@@ -202,7 +243,7 @@
       return;
     }
     socket.addEventListener('message', (event)=>{
-      if(!started || ended || mode !== 'streamer') return;
+      if(!started || ended || paused || mode !== 'streamer') return;
       let payload = null;
       try{
         payload = JSON.parse(event.data);
@@ -335,7 +376,7 @@
   }
 
   function onLaneTap(lane){
-    if(ended) return;
+    if(ended || paused) return;
     recordTap(lane);
     handleHit(lane);
   }
@@ -391,6 +432,11 @@
 
   function loop(now){
     if(ended) return;
+    if(paused){
+      lastTime = now;
+      requestAnimationFrame(loop);
+      return;
+    }
     let dt = Math.min(0.05, (now - lastTime)/1000);
     lastTime = now;
 
@@ -452,6 +498,9 @@
   function finishGame(reason){
     if(ended) return;
     ended = true;
+    paused = false;
+    if(pauseBtn) pauseBtn.disabled = true;
+    if(pauseOverlay) pauseOverlay.style.display = 'none';
     if(bgVideo) bgVideo.pause();
     if(reason === 'gameover'){
       showResultOverlay('GAME OVER');
@@ -471,6 +520,7 @@
     missCount = 0;
     life = LIFE_MAX;
     ended = false;
+    paused = false;
     judgement = null;
     judgEl.textContent = '';
     judgEl.style.opacity = '0';
@@ -483,6 +533,8 @@
     }
     if(toastEl) toastEl.style.display = 'none';
     if(resultOverlay) resultOverlay.style.display = 'none';
+    if(pauseOverlay) pauseOverlay.style.display = 'none';
+    if(pauseBtn) pauseBtn.textContent = 'Pause';
     updateLifeHud();
   }
 
@@ -491,12 +543,15 @@
     mode = selectedMode;
     started = true;
     resetGameState();
+    applyBgmVolume(bgmVolumeValueState, false);
     startOverlay.style.display = 'none';
+    if(pauseBtn) pauseBtn.disabled = false;
     lastTime = performance.now();
     baseVideoTime = null;
 
     if(bgVideo){
       bgVideo.currentTime = 0;
+      applyBgmVolume(bgmVolumeValueState, false);
       bgVideo.play().catch(()=>{});
     }
 
@@ -550,6 +605,11 @@
       startOverlay.style.display = 'flex';
       started = false;
       mode = null;
+      paused = false;
+      if(pauseOverlay) pauseOverlay.style.display = 'none';
+      if(pauseBtn) pauseBtn.textContent = 'Pause';
+      if(pauseBtn) pauseBtn.disabled = true;
+      applyBgmVolume(bgmVolumeValueState, false);
       updateLifeHud();
       if(resultOverlay) resultOverlay.style.display = 'none';
     });
@@ -574,6 +634,78 @@
   draw();
   updateLifeHud();
   initVolumeControl();
+  if(pauseBtn) pauseBtn.disabled = true;
+
+  if(bgVideo){
+    bgVideo.addEventListener('loadedmetadata', () => {
+      applyBgmVolume(bgmVolumeValueState, false);
+    });
+    bgVideo.addEventListener('canplay', () => {
+      applyBgmVolume(bgmVolumeValueState, false);
+    });
+  }
+
+  if(pauseBtn){
+    pauseBtn.addEventListener('pointerdown', (e)=>{
+      e.preventDefault();
+      if(!started || ended) return;
+      if(paused){
+        paused = false;
+        if(pauseOverlay) pauseOverlay.style.display = 'none';
+        pauseBtn.textContent = 'Pause';
+        if(bgVideo){
+          applyBgmVolume(bgmVolumeValueState, false);
+          bgVideo.play().catch(()=>{});
+          baseVideoTime = bgVideo.currentTime;
+        }
+        lastTime = performance.now();
+        return;
+      }
+      paused = true;
+      if(bgVideo) bgVideo.pause();
+      if(pauseOverlay) pauseOverlay.style.display = 'flex';
+      pauseBtn.textContent = 'Resume';
+    });
+  }
+
+  if(resumeBtn){
+    resumeBtn.addEventListener('pointerdown', (e)=>{
+      e.preventDefault();
+      if(!started || ended || !paused) return;
+      paused = false;
+      if(pauseOverlay) pauseOverlay.style.display = 'none';
+      if(pauseBtn) pauseBtn.textContent = 'Pause';
+      if(bgVideo){
+        applyBgmVolume(bgmVolumeValueState, false);
+        bgVideo.play().catch(()=>{});
+        baseVideoTime = bgVideo.currentTime;
+      }
+      lastTime = performance.now();
+    });
+  }
+
+  if(backToSettingsBtn){
+    backToSettingsBtn.addEventListener('pointerdown', (e)=>{
+      e.preventDefault();
+      if(bgVideo){
+        bgVideo.pause();
+        bgVideo.currentTime = 0;
+      }
+      resetGameState();
+      started = false;
+      mode = null;
+      paused = false;
+      ended = true;
+      baseVideoTime = null;
+      if(startOverlay) startOverlay.style.display = 'flex';
+      if(pauseOverlay) pauseOverlay.style.display = 'none';
+      if(pauseBtn){
+        pauseBtn.textContent = 'Pause';
+        pauseBtn.disabled = true;
+      }
+      applyBgmVolume(bgmVolumeValueState, false);
+    });
+  }
 
   // expose for debugging
   window._rhythm = {notes};

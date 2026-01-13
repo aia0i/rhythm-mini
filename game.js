@@ -2,6 +2,9 @@
 (function(){
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
+  const stageEl = document.getElementById('stage');
+  const hitLineEl = document.querySelector('.hitline');
+  const hitLineDebug = document.getElementById('hitlineDebug');
   const scoreEl = document.getElementById('score');
   const comboEl = document.getElementById('combo');
   const judgEl = document.getElementById('judgement');
@@ -40,7 +43,10 @@
   const BASE_W = 1280;
   const BASE_H = 720;
   const LANES = 4;
-  const HIT_Y = BASE_H - 120; // pixel position of hit line
+  const HIT_LINE_OFFSET = 120; // base design offset from bottom
+  const HIT_LINE_RATIO = (BASE_H - HIT_LINE_OFFSET) / BASE_H;
+  const SPAWN_INTERVAL = 700; // ms
+  const NOTE_SPEED = 320; // px per second
 
   const LIFE_MAX = 100;
   const LIFE_GAIN_PERFECT = 2;
@@ -64,24 +70,57 @@
   const UI_SCALE_STORAGE_KEY = 'rhythm_ui_scale';
 
   let dpr = Math.max(1, window.devicePixelRatio || 1);
-  function applyDPR(){
-    const stage = document.getElementById('stage');
-    const rect = stage.getBoundingClientRect();
+  let stageRect = null;
+  let hitLineY = BASE_H * HIT_LINE_RATIO;
+  let travelTime = (hitLineY + 24) / NOTE_SPEED;
+  let laneXs = [];
+  let laneWidthStage = 0;
+  function applyDPR(rect){
+    const targetRect = rect || stageRect || (stageEl ? stageEl.getBoundingClientRect() : null);
+    if(!targetRect) return;
     canvas.width = BASE_W * dpr;
     canvas.height = BASE_H * dpr;
-    canvas.style.width = rect.width + 'px';
-    canvas.style.height = rect.height + 'px';
+    canvas.style.width = targetRect.width + 'px';
+    canvas.style.height = targetRect.height + 'px';
     ctx.setTransform(dpr,0,0,dpr,0,0);
   }
-  applyDPR();
-  window.addEventListener('resize', ()=>{ dpr = Math.max(1, window.devicePixelRatio || 1); applyDPR(); });
+
+  function updateLayoutMetrics(reason){
+    if(!stageEl) return;
+    stageRect = stageEl.getBoundingClientRect();
+    const stageHeight = Math.max(1, stageRect.height);
+    const stageWidth = Math.max(1, stageRect.width);
+    const hitLineYStage = stageHeight * HIT_LINE_RATIO;
+    hitLineY = (hitLineYStage / stageHeight) * BASE_H;
+    travelTime = (hitLineY + 24) / NOTE_SPEED;
+    laneWidthStage = stageWidth / LANES;
+    laneXs = Array.from({length: LANES}, (_, i) => i * laneWidthStage);
+
+    if(hitLineEl){
+      hitLineEl.style.top = `${hitLineYStage - 2}px`;
+      hitLineEl.style.bottom = 'auto';
+    }
+    if(hitLineDebug){
+      hitLineDebug.textContent = `hitLineY=${hitLineYStage.toFixed(1)}px`;
+      hitLineDebug.style.top = `${Math.max(6, hitLineYStage - 26)}px`;
+    }
+
+    dpr = Math.max(1, window.devicePixelRatio || 1);
+    applyDPR(stageRect);
+
+    if(isMobileUi()){
+      console.log('[layout] updateLayoutMetrics', reason || '');
+    }
+  }
+
+  window.addEventListener('resize', ()=>{ updateLayoutMetrics('resize'); });
+  window.addEventListener('orientationchange', ()=>{ updateLayoutMetrics('orientationchange'); });
+  window.addEventListener('DOMContentLoaded', ()=>{ updateLayoutMetrics('domcontentloaded'); });
 
   // Game state
   let notes = [];
   let spawnTimer = 0;
-  const SPAWN_INTERVAL = 700; // ms
-  const NOTE_SPEED = 320; // px per second
-  const TRAVEL_TIME = (HIT_Y + 24) / NOTE_SPEED; // seconds to reach hit line
+  updateLayoutMetrics('init');
 
   let lastTime = performance.now();
   let baseVideoTime = null;
@@ -368,7 +407,7 @@
       const mediaTime = getMediaTime();
       while(chartIndex < chartNotes.length){
         const entry = chartNotes[chartIndex];
-        const spawnTime = entry.t - TRAVEL_TIME;
+        const spawnTime = entry.t - travelTime;
         if(mediaTime >= spawnTime){
           const lane = Math.max(0, Math.min(LANES-1, entry.lane));
           notes.push({lane, y:-24});
@@ -387,7 +426,7 @@
       const n = notes[i];
       n.y += NOTE_SPEED * dt;
       // miss if passes too far below hit line
-      if(n.y > HIT_Y + MISS_WINDOW){
+      if(n.y > hitLineY + MISS_WINDOW){
         notes.splice(i,1);
         registerMiss();
         showJudgement('MISS');
@@ -414,11 +453,11 @@
     for(let i=0;i<notes.length;i++){
       const n = notes[i];
       if(n.lane !== lane) continue;
-      const dist = Math.abs(n.y - HIT_Y);
+      const dist = Math.abs(n.y - hitLineY);
       if(dist < bestDist){ bestDist = dist; bestIndex = i; }
     }
     if(bestIndex === -1){ showJudgement('MISS'); registerMiss(); return; }
-    const dist = Math.abs(notes[bestIndex].y - HIT_Y);
+    const dist = Math.abs(notes[bestIndex].y - hitLineY);
     if(dist <= PERFECT_WINDOW){
       score += 100;
       combo += 1;
@@ -473,7 +512,7 @@
 
     // draw hit line guide
     ctx.fillStyle = 'rgba(255,255,255,0.06)';
-    ctx.fillRect(0,HIT_Y-2,BASE_W,4);
+    ctx.fillRect(0,hitLineY-2,BASE_W,4);
 
     // draw notes
     for(const n of notes){
@@ -621,6 +660,7 @@
       startOverlay.style.display = 'none';
       startOverlay.style.pointerEvents = 'none';
     }
+    updateLayoutMetrics('startGame');
     if(pauseBtn) pauseBtn.disabled = false;
     lastTime = performance.now();
     baseVideoTime = null;

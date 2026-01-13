@@ -2,13 +2,16 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
   <title>Rhythm Mini</title>
   <style>
-    html,body{height:100%;margin:0;font-family:system-ui,Segoe UI,Helvetica,Arial}
+    html,body{height:100%;width:100%;margin:0;font-family:system-ui,Segoe UI,Helvetica,Arial;-webkit-text-size-adjust:100%;overflow:hidden}
     :root{--ui-scale:1.5}
-    body{display:flex;align-items:center;justify-content:center;background:#0f1724;color:#fff}
-    .stage{width:min(95vw, calc(95vh * 16 / 9));aspect-ratio:16/9;background:#081028;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.6);position:relative;overflow:hidden}
+    body{display:flex;align-items:center;justify-content:center;background:#0f1724;color:#fff;overscroll-behavior:none;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+    .stage{width:min(95vw, calc(95dvh * 16 / 9));max-width:100vw;max-height:100dvh;aspect-ratio:16/9;background:#081028;border-radius:12px;box-shadow:0 6px 20px rgba(0,0,0,.6);position:relative;overflow:hidden}
+    .stage, .hud, .judgement, .hitline{-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none}
+    .lane-buttons, .lane-btn, canvas{-webkit-user-select:none;user-select:none;touch-action:none;-webkit-tap-highlight-color:transparent}
+    button{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
     .bg-video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;z-index:0}
     .bg-dim{position:absolute;inset:0;background:rgba(0,0,0,var(--bg-dim, 0.35));z-index:1}
     canvas{display:block;background:transparent;position:relative;z-index:2}
@@ -20,9 +23,15 @@
     .settings-audio{display:flex;flex-direction:column;gap:8px;min-width:220px}
     .settings-audio .row{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px}
     .settings-audio .value{min-width:28px;text-align:right;font-variant-numeric:tabular-nums}
+    .settings-ui{display:flex;flex-direction:column;gap:6px}
+    .settings-ui .row{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px}
+    .ui-scale{display:flex;gap:6px}
+    .ui-scale input{position:absolute;opacity:0;pointer-events:none}
+    .ui-scale label{padding:6px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.15);cursor:pointer;font-size:12px}
+    .ui-scale input:checked + label{background:#ffd36b;color:#081028;border-color:#ffd36b}
     .pause-btn{margin-top:8px;background:#ffd36b;border:0;border-radius:8px;padding:6px 10px;font-weight:700;cursor:pointer;font-size:11px;letter-spacing:.4px}
-    .lane-buttons{position:absolute;left:0;right:0;bottom:0;top:0;display:flex;z-index:4}
-    .lane-btn{flex:1;background:transparent;border:0;outline:none}
+    .lane-buttons{position:absolute;left:0;right:0;bottom:0;top:0;display:flex;z-index:4;min-height:44px}
+    .lane-btn{flex:1;background:transparent;border:0;outline:none;min-height:44px}
     .judgement{position:absolute;left:50%;transform:translateX(-50%);top:40%;font-size:calc(20px * var(--ui-scale));font-weight:700;pointer-events:none;z-index:3}
     .hitline{position:absolute;left:0;right:0;height:4px;background:linear-gradient(90deg,#ffd36b,#ff6b6b);bottom:120px;opacity:.85;z-index:3}
     .start-overlay,.result-overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);backdrop-filter:blur(2px);z-index:6}
@@ -43,6 +52,16 @@
     .result-panel .stats{font-size:calc(12px * var(--ui-scale));opacity:.95;line-height:1.5}
     .result-panel .stats span{display:block}
     .toast{position:absolute;left:50%;transform:translateX(-50%);bottom:160px;background:rgba(10,18,32,.9);border:1px solid rgba(123,247,255,.5);padding:8px 12px;border-radius:10px;font-size:12px;letter-spacing:.4px;z-index:6;display:none}
+    @media (max-width: 720px){
+      .stage{width:min(98vw, calc(98dvh * 16 / 9));border-radius:10px}
+      .mode-panel{width:min(92vw, 360px)}
+      .result-panel{width:min(92vw, 360px)}
+      .settings-audio .row,.settings-ui .row{font-size:clamp(12px, 3.6vw, 14px)}
+      .start-btn{font-size:clamp(12px, 4vw, 16px);padding:10px 14px}
+      .pause-btn{font-size:clamp(11px, 3.6vw, 14px)}
+      .chart-panel{width:min(90vw, 520px);max-height:70%}
+      .toast{font-size:clamp(11px, 3.6vw, 13px)}
+    }
   </style>
 </head>
 <body>
@@ -80,6 +99,19 @@
             <label for="bgmVolume">BGM</label>
             <input id="bgmVolume" type="range" min="0" max="100" value="80" />
             <span class="value" id="bgmVolumeValue">80</span>
+          </div>
+        </div>
+        <div class="settings-ui">
+          <div class="row">
+            <span>UI Size</span>
+            <div class="ui-scale" id="uiScaleGroup">
+              <input type="radio" name="uiScale" id="uiScale100" value="1">
+              <label for="uiScale100">100%</label>
+              <input type="radio" name="uiScale" id="uiScale125" value="1.25">
+              <label for="uiScale125">125%</label>
+              <input type="radio" name="uiScale" id="uiScale150" value="1.5" checked>
+              <label for="uiScale150">150%</label>
+            </div>
           </div>
         </div>
         <div class="mode-buttons">
@@ -124,3 +156,5 @@
   <script src="game.js"></script>
 </body>
 </html>
+
+

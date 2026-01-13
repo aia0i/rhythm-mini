@@ -29,6 +29,9 @@
   const chartCopy = document.getElementById('chartCopy');
   const bgmVolume = document.getElementById('bgmVolume');
   const bgmVolumeValue = document.getElementById('bgmVolumeValue');
+  const uiScale100 = document.getElementById('uiScale100');
+  const uiScale125 = document.getElementById('uiScale125');
+  const uiScale150 = document.getElementById('uiScale150');
   const pauseBtn = document.getElementById('pauseBtn');
   const pauseOverlay = document.getElementById('pauseOverlay');
   const resumeBtn = document.getElementById('resumeBtn');
@@ -57,6 +60,8 @@
   const JAMMER_RATE_LIMIT = 1.0;
   const DEFAULT_BGM_VOLUME = 80;
   const BGM_VOLUME_STORAGE_KEY = 'rhythm_bgm_volume';
+  const DEFAULT_UI_SCALE = 1.5;
+  const UI_SCALE_STORAGE_KEY = 'rhythm_ui_scale';
 
   let dpr = Math.max(1, window.devicePixelRatio || 1);
   function applyDPR(){
@@ -100,6 +105,7 @@
   let lastJammerAt = -Infinity;
   let toastTimer = null;
   let bgmVolumeValueState = DEFAULT_BGM_VOLUME;
+  let uiScaleValue = DEFAULT_UI_SCALE;
 
   const PERFECT_WINDOW = 22;
   const GOOD_WINDOW = 55;
@@ -114,6 +120,51 @@
   function clampVolume(value, fallback){
     if(Number.isNaN(value)) return fallback;
     return Math.max(0, Math.min(100, value));
+  }
+
+  function isMobileUi(){
+    if(!window.matchMedia) return false;
+    return window.matchMedia('(max-width: 720px)').matches || window.matchMedia('(pointer: coarse)').matches;
+  }
+
+  function getDefaultUiScale(){
+    return isMobileUi() ? 1.5 : DEFAULT_UI_SCALE;
+  }
+
+  function normalizeUiScale(value, fallback){
+    const allowed = [1, 1.25, 1.5];
+    const base = fallback === undefined ? DEFAULT_UI_SCALE : fallback;
+    if(Number.isNaN(value)) return base;
+    for(const option of allowed){
+      if(Math.abs(option - value) < 0.001) return option;
+    }
+    return base;
+  }
+
+  function readStoredUiScale(){
+    if(!window.localStorage) return getDefaultUiScale();
+    const raw = window.localStorage.getItem(UI_SCALE_STORAGE_KEY);
+    if(raw === null) return getDefaultUiScale();
+    return normalizeUiScale(Number(raw), getDefaultUiScale());
+  }
+
+  function hasStoredUiScale(){
+    if(!window.localStorage) return false;
+    return window.localStorage.getItem(UI_SCALE_STORAGE_KEY) !== null;
+  }
+
+  function writeStoredUiScale(value){
+    if(!window.localStorage) return;
+    window.localStorage.setItem(UI_SCALE_STORAGE_KEY, String(value));
+  }
+
+  function applyUiScale(value, persist){
+    uiScaleValue = normalizeUiScale(value, getDefaultUiScale());
+    document.documentElement.style.setProperty('--ui-scale', String(uiScaleValue));
+    if(uiScale100) uiScale100.checked = uiScaleValue === 1;
+    if(uiScale125) uiScale125.checked = uiScaleValue === 1.25;
+    if(uiScale150) uiScale150.checked = uiScaleValue === 1.5;
+    if(persist) writeStoredUiScale(uiScaleValue);
   }
 
   function readStoredBgmVolume(){
@@ -152,6 +203,17 @@
     bgmVolume.addEventListener('input', () => {
       applyBgmVolume(Number(bgmVolume.value), true);
     });
+  }
+
+  function initUiScaleControl(){
+    applyUiScale(readStoredUiScale(), !hasStoredUiScale());
+    const handler = (event) => {
+      const value = Number(event.target.value);
+      applyUiScale(value, true);
+    };
+    if(uiScale100) uiScale100.addEventListener('change', handler);
+    if(uiScale125) uiScale125.addEventListener('change', handler);
+    if(uiScale150) uiScale150.addEventListener('change', handler);
   }
 
   function setChartPanelVisible(visible){
@@ -235,15 +297,26 @@
       updateChartStatus('Chart: missing, using fallback');
     });
 
+  let wsSocket = null;
+  let wsReady = false;
   function setupWebSocket(){
-    let socket;
+    if(wsSocket && wsReady) return;
     try{
-      socket = new WebSocket(WS_URL);
+      wsSocket = new WebSocket(WS_URL);
     } catch (err){
+      wsSocket = null;
       return;
     }
-    socket.addEventListener('message', (event)=>{
-      if(!started || ended || paused || mode !== 'streamer') return;
+    wsReady = true;
+    wsSocket.addEventListener('open', ()=>{
+      console.log('[ws] connected');
+    });
+    wsSocket.addEventListener('message', (event)=>{
+      if(mode !== 'streamer'){
+        console.log('[ws] ignored (not streamer mode)');
+        return;
+      }
+      if(!started || ended || paused) return;
       let payload = null;
       try{
         payload = JSON.parse(event.data);
@@ -251,6 +324,7 @@
         return;
       }
       if(!payload || payload.type !== 'spawn_notes' || !payload.jammer) return;
+      console.log('[ws] received spawn_notes');
       const mediaTime = getMediaTime();
       if(mediaTime - lastJammerAt < JAMMER_RATE_LIMIT) return;
       lastJammerAt = mediaTime;
@@ -264,7 +338,6 @@
       showToast(`Jammer notes by ${by}!`);
     });
   }
-  setupWebSocket();
 
   function spawnRandom(){
     const lane = Math.floor(Math.random()*LANES);
@@ -544,7 +617,10 @@
     started = true;
     resetGameState();
     applyBgmVolume(bgmVolumeValueState, false);
-    startOverlay.style.display = 'none';
+    if(startOverlay){
+      startOverlay.style.display = 'none';
+      startOverlay.style.pointerEvents = 'none';
+    }
     if(pauseBtn) pauseBtn.disabled = false;
     lastTime = performance.now();
     baseVideoTime = null;
@@ -553,6 +629,10 @@
       bgVideo.currentTime = 0;
       applyBgmVolume(bgmVolumeValueState, false);
       bgVideo.play().catch(()=>{});
+    }
+
+    if(mode === 'streamer'){
+      setupWebSocket();
     }
 
     requestAnimationFrame(loop);
@@ -602,7 +682,10 @@
     restartBtn.addEventListener('pointerdown', (e)=>{
       e.preventDefault();
       if(bgVideo) bgVideo.pause();
-      startOverlay.style.display = 'flex';
+      if(startOverlay){
+        startOverlay.style.display = 'flex';
+        startOverlay.style.pointerEvents = 'auto';
+      }
       started = false;
       mode = null;
       paused = false;
@@ -634,6 +717,7 @@
   draw();
   updateLifeHud();
   initVolumeControl();
+  initUiScaleControl();
   if(pauseBtn) pauseBtn.disabled = true;
 
   if(bgVideo){
@@ -697,7 +781,10 @@
       paused = false;
       ended = true;
       baseVideoTime = null;
-      if(startOverlay) startOverlay.style.display = 'flex';
+      if(startOverlay){
+        startOverlay.style.display = 'flex';
+        startOverlay.style.pointerEvents = 'auto';
+      }
       if(pauseOverlay) pauseOverlay.style.display = 'none';
       if(pauseBtn){
         pauseBtn.textContent = 'Pause';
@@ -711,3 +798,4 @@
   window._rhythm = {notes};
 
 })();
+
